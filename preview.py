@@ -8,7 +8,7 @@ import rect
 
 # inter-frame delay, in milliseconds
 # 50 gives around 20 fps and doesn't overload the machine too badly
-frame_timeout = 50
+frame_timeout = 200
 
 # width of selection box border
 select_width = 2
@@ -233,11 +233,20 @@ class Preview(Gtk.EventBox):
         if frame.getDataSize() == 0:
             return
 
-        pixbuf = decompress.bufjpeg2pixbuf(data, length)
-        if pixbuf != None:
-            self.pixbuf = pixbuf
-            self.image.set_from_pixbuf(pixbuf)
-            self.frame += 1
+        # gbytes = GLib.Bytes.new_take(bytes(frame.getData()))
+        pixbuf = GdkPixbuf.Pixbuf.new_from_data(bytes(frame.getData()),
+                                                 GdkPixbuf.Colorspace.RGB,
+                                                 False,
+                                                 8,
+                                                 frame.getCols(),
+                                                 frame.getRows(),
+                                                 frame.getCols() * 3,
+                                                 None, None)
+
+        self.pixbuf = pixbuf
+        self.image.set_from_pixbuf(pixbuf)
+
+        self.frame += 1
 
     def get_live(self):
         """Return True if the display is currently live."""
@@ -267,13 +276,14 @@ class Preview(Gtk.EventBox):
         return True
 
     def set_live(self, live):
+        print('set_live')
         """Turn the live preview on and off.
+
         live -- True means start the live preview display
         """
         if live and self.preview_timeout == 0:
             logging.debug('starting timeout ..')
-            self.preview_timeout = GLib.timeout_add(frame_timeout,
-                            self.live_cb)
+            self.preview_timeout = GLib.timeout_add(frame_timeout, self.live_cb)
             self.fps_timeout = GLib.timeout_add(1000, self.fps_cb)
 
         elif not live and self.preview_timeout != 0:
@@ -286,3 +296,4 @@ class Preview(Gtk.EventBox):
             # grab a frame immediately so we can get an exception, if there
             # are any
             self.grab_frame()
+            print('Frame grabbed')

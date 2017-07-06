@@ -11,7 +11,7 @@ import logging
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, GLib
 
 # how long to keep the bar visible, in milliseconds
 info_timeout = 5000
@@ -37,7 +37,7 @@ class Info(Gtk.InfoBar):
         content = self.get_content_area()
 
         self.label = Gtk.Label()
-        content.pack_start(self.label, False, False)
+        content.pack_start(self.label, False, False, 0)
         self.label.show()
 
         self.add_button('Close', 0)
@@ -51,9 +51,9 @@ class Info(Gtk.InfoBar):
     def pop(self):
         self.show()
         if self.hide_timeout:
-            glib.source_remove(self.hide_timeout)
+            GLib.source_remove(self.hide_timeout)
             self.hide_timeout = 0
-        self.hide_timeout = glib.timeout_add(info_timeout, self.timeout_cb)
+        self.hide_timeout = GLib.timeout_add(info_timeout, self.timeout_cb)
 
     def set_msg(self, main, sub):
         self.label.set_markup('<b>%s</b>\n%s' % (main, sub))
@@ -65,7 +65,7 @@ class Info(Gtk.InfoBar):
         """
         self.set_msg(main, sub)
         logging.debug('info: %s, %s', main, sub)
-        self.set_message_type(Gtk.MESSAGE_INFO)
+        self.set_message_type(Gtk.MessageType.INFO)
         self.pop()
 
     def err(self, main, sub):

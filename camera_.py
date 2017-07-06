@@ -3,14 +3,16 @@ import PyCapture2
 import logging
 
 import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+
 
 import cv2
 import numpy
 
 import threading
 import time
+
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
 # Ensure sufficient cameras are found
 bus = PyCapture2.BusManager()
@@ -102,7 +104,7 @@ def live_view():
 													8,
 													frame.getCols(),
 													frame.getRows(),
-													width * nChannels)
+													frame.getCols() * nChannels)
 													# None,
 													# None)
 
