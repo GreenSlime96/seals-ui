@@ -50,10 +50,14 @@ class Camera:
         self.busManager = PyCapture2.BusManager()
         self.camera = PyCapture2.Camera()
 
+        # Temporary buffer
+        self.buffer = None
+
         # Declare camera modes here
         self.mode_current = None
 
         self.mode_preview = None
+        self.mode_focus = None
         self.mode_capture = None
 
     def connect(self):
@@ -97,6 +101,10 @@ class Camera:
             except PyCapture2.Fc2error:
                 raise Error('Unable to connect to camera')
 
+
+            # set camera properties to preset...
+            # self.camera.setProperty()
+
             # check if PREVIEW is supported
             fmt7info, supported = self.camera.getFormat7Info(PyCapture2.
                                                              MODE.MODE_5)
@@ -126,15 +134,25 @@ class Camera:
         """
         if self.camera.isConnected:
             logging.debug('** camera shutdown')
-            print('release')
             self.camera.disconnect()
+
+    def capture_cb(self, image):
+        self.buffer = {'cols': image.getCols(),
+                       'data': image.getData(),
+                       'dataSize': image.getDataSize(),
+                       'rows': image.getRows(),
+                       'stride': image.getStride()}
 
     def ensure_mode(self, mode):
         if self.mode_current != mode:
             self.camera.stopCapture()
+            self.buffer = None
             self.camera.setFormat7ConfigurationPacket(*mode)
             self.mode_current = mode
-            self.camera.startCapture()
+            self.camera.startCapture(self.capture_cb)
+
+            while self.buffer is None:
+                time.sleep(0.05)
 
     def preview(self):
         """Connect and capture a preview frame.
@@ -150,9 +168,34 @@ class Camera:
         self.connect()
         self.ensure_mode(self.mode_preview)
 
-        retval = self.camera.retrieveBuffer()
+        return self.buffer
 
-        logging.debug('preview: frame at addr %d, length %d', id(retval),
-                      retval.getDataSize())
+    def focus_area(self, selection):
+        self.connect()
 
-        return retval
+        fmt7info, supported = self.camera.getFormat7Info(PyCapture2.
+                                                         MODE.MODE_0)
+
+        fmt7imgSet = PyCapture2.Format7ImageSettings(PyCapture2.MODE.MODE_0,
+                                                     selection.left,
+                                                     selection.top,
+                                                     selection.width,
+                                                     selection.height,
+                                                     PyCapture2.
+                                                     PIXEL_FORMAT.RGB8)
+
+        fmt7pktInf, isValid = self.camera.validateFormat7Settings(fmt7imgSet)
+
+        if not isValid:
+            raise Error('Camera does not support Preview mode')
+
+        self.mode_focus = (fmt7pktInf.recommendedBytesPerPacket, fmt7imgSet)
+
+
+    def focus(self):
+        logging.debug('** camera focus')
+
+        self.connect()
+        self.ensure_mode(self.mode_focus)
+
+        return self.buffer

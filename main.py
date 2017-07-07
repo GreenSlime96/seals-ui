@@ -14,6 +14,8 @@ import preview
 import camera
 import progress
 import info
+import focus
+# import config
 
 # how long to keep the play/pause button visible after a mouse event,
 # in milliseconds
@@ -25,15 +27,15 @@ preview_width = 1060
 class MainWindow(Gtk.Window):
 
     def destroy_cb(self, widget, data=None):
-        print('destroy_cb')
+        if self.focus_window:
+            self.focus_window.destroy()
+            self.focus_window = None
 
         self.camera.release()
 
         Gtk.main_quit()
 
     def preview_hide_cb(self):
-        print('preview_hide_cb')
-
         self.live_hide_timeout = 0
         self.live.hide()
 
@@ -52,8 +54,6 @@ class MainWindow(Gtk.Window):
         return True
 
     def set_live(self, live):
-        print('set_live')
-
         if live:
             self.live.set_image(self.pause_image)
         else:
@@ -63,13 +63,26 @@ class MainWindow(Gtk.Window):
         self.camera.release()
 
     def live_cb(self, widget, data=None):
-        print('live_cb')
         self.set_live(not self.preview.get_live())
+
+    def focus_destroy_cb(self, widget, data=None):
+        self.focus_window = None
+
+    def focus_cb(self, widget, data=None):
+        if self.focus_window:
+            self.focus_window.present()
+        else:
+            self.focus_window = focus.Focus(self.camera,
+                                            self.preview.get_selection())
+            self.focus_window.connect('destroy', self.focus_destroy_cb)
+            self.focus_window.show()
+
 
     def __init__(self):
         Gtk.Window.__init__(self)
         self.connect('destroy', self.destroy_cb)
 
+        self.focus_window = None
         self.config_window = None
         self.live_hide_timeout = 0
         self.busy = False
@@ -146,7 +159,7 @@ class MainWindow(Gtk.Window):
 
         button = Gtk.Button('Focus')
         button.set_tooltip_text("Focus camera automatically")
-        # button.connect('clicked', self.focus_cb, None)
+        button.connect('clicked', self.focus_cb, None)
         self.toolbar.pack_start(button, False, False, 0)
         button.show()
 

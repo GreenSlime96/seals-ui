@@ -8,7 +8,7 @@ import rect
 
 # inter-frame delay, in milliseconds
 # 50 gives around 20 fps and doesn't overload the machine too badly
-frame_timeout = 200
+frame_timeout = 50
 
 # width of selection box border
 select_width = 2
@@ -53,36 +53,38 @@ class Preview(Gtk.EventBox):
     get_selection -- get the currently selected rect.Rect (if any)
     """
 
-    def draw_rect(self, gc, rect, margin):
+    def draw_rect(self, colour, rect, margin):
         window = self.image.get_window()
+        cr = window.cairo_create()
 
-        window.draw_rectangle(gc, True,
-                              rect.left - margin,
-                              rect.top - margin,
-                              rect.width + margin * 2,
-                              margin * 2)
-        window.draw_rectangle(gc, True,
-                              rect.right() - margin,
-                              rect.top + margin,
-                              margin * 2,
-                              max(0, rect.height - margin * 2))
-        window.draw_rectangle(gc, True,
-                              rect.left - margin,
-                              rect.bottom() - margin,
-                              rect.width + margin * 2,
-                              margin * 2)
-        window.draw_rectangle(gc, True,
-                              rect.left - margin,
-                              rect.top + margin,
-                              margin * 2,
-                              max(0, rect.height - margin * 2))
+        cr.set_source_rgb(*colour)
+
+        cr.rectangle(rect.left - margin,
+                     rect.top - margin,
+                     rect.width + margin * 2,
+                     margin * 2)
+        cr.rectangle(rect.right() - margin,
+                     rect.top + margin,
+                     margin * 2,
+                     max(0, rect.height - margin * 2))
+        cr.rectangle(rect.left - margin,
+                     rect.bottom() - margin,
+                     rect.width + margin * 2,
+                     margin * 2)
+        cr.rectangle(rect.left - margin,
+                     rect.top + margin,
+                     margin * 2,
+                     max(0, rect.height - margin * 2))
+
+        cr.fill()
+
 
     # expose on our Gtk.Image
     def expose_event(self, widget, event):
         if self.select_visible:
-            self.draw_rect(widget.get_style().white,
+            self.draw_rect(widget.get_style().white.to_floats(),
                            self.select_area, select_width)
-            self.draw_rect(widget.get_style().black,
+            self.draw_rect(widget.get_style().black.to_floats(),
                            self.select_area, select_width - 1)
 
         return False
@@ -205,11 +207,12 @@ class Preview(Gtk.EventBox):
 
         # start with a blank 640x426 image, we overwrite this with jpg from
         # the camera during live preview
-        self.pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8,
-                                           1060, 706)
-        self.image.set_from_pixbuf(self.pixbuf)
+        # self.pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8,
+        #                                    1060, 706)
+        # self.image.set_from_pixbuf(self.pixbuf)
         self.image.set_app_paintable(True)
 
+        self.frame_buffer = None
         self.preview_timeout = 0
         self.camera = camera
         self.frame = 0
@@ -230,22 +233,25 @@ class Preview(Gtk.EventBox):
         logging.debug('grabbing frame ..')
         frame = self.camera.preview()
 
-        if frame.getDataSize() == 0:
+        # print('frame size %d' % frame.getDataSize())
+        #
+        if self.frame_buffer is frame:
             return
 
         # gbytes = GLib.Bytes.new_take(bytes(frame.getData()))
-        pixbuf = GdkPixbuf.Pixbuf.new_from_data(bytes(frame.getData()),
-                                                 GdkPixbuf.Colorspace.RGB,
-                                                 False,
-                                                 8,
-                                                 frame.getCols(),
-                                                 frame.getRows(),
-                                                 frame.getCols() * 3,
-                                                 None, None)
+        pixbuf = GdkPixbuf.Pixbuf.new_from_data(bytes(frame['data']),
+                                                GdkPixbuf.Colorspace.RGB,
+                                                False,
+                                                8,
+                                                frame['cols'],
+                                                frame['rows'],
+                                                frame['cols'] * 3,
+                                                None, None)
 
-        self.pixbuf = pixbuf
+        # self.pixbuf = pixbuf
         self.image.set_from_pixbuf(pixbuf)
 
+        self.frame_buffer = frame
         self.frame += 1
 
     def get_live(self):
@@ -261,10 +267,14 @@ class Preview(Gtk.EventBox):
 
         image_width = self.image.get_allocation().width
         image_height = self.image.get_allocation().height
-        return rect.Rect(1000 * self.select_area.left / image_width,
-                         1000 * self.select_area.top / image_height,
-                         1000 * self.select_area.width / image_width,
-                         1000 * self.select_area.height / image_height)
+        # return rect.Rect(1000 * self.select_area.left / image_width,
+        #                  1000 * self.select_area.top / image_height,
+        #                  1000 * self.select_area.width / image_width,
+        #                  1000 * self.select_area.height / image_height)
+        return rect.Rect(self.select_area.left * 4,
+                         self.select_area.top * 4,
+                         self.select_area.width * 4,
+                         self.select_area.height * 4)
 
     def live_cb(self):
         self.grab_frame()
@@ -276,7 +286,6 @@ class Preview(Gtk.EventBox):
         return True
 
     def set_live(self, live):
-        print('set_live')
         """Turn the live preview on and off.
 
         live -- True means start the live preview display
@@ -296,4 +305,3 @@ class Preview(Gtk.EventBox):
             # grab a frame immediately so we can get an exception, if there
             # are any
             self.grab_frame()
-            print('Frame grabbed')
