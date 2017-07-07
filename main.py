@@ -17,10 +17,6 @@ import info
 import focus
 # import config
 
-# how long to keep the play/pause button visible after a mouse event,
-# in milliseconds
-preview_timeout = 5000
-
 #1060 x 706 pixels for preview
 preview_width = 1060
 
@@ -35,40 +31,13 @@ class MainWindow(Gtk.Window):
 
         Gtk.main_quit()
 
-    def preview_hide_cb(self):
-        self.live_hide_timeout = 0
-        self.live.hide()
-
-        return False
-
-    def preview_motion_cb(self, widget, event):
-        self.live.show()
-
-        if self.live_hide_timeout:
-            GLib.source_remove(self.live_hide_timeout)
-            self.live_hide_timeout = 0
-
-        self.live_hide_timeout = GLib.timeout_add(preview_timeout,
-                                                  self.preview_hide_cb)
-
-        return True
-
-    def set_live(self, live):
-        if live:
-            self.live.set_image(self.pause_image)
-        else:
-            self.live.set_image(self.play_image)
-
-        self.preview.set_live(live)
-        self.camera.release()
-
-    def live_cb(self, widget, data=None):
-        self.set_live(not self.preview.get_live())
-
     def focus_destroy_cb(self, widget, data=None):
+        self.preview.set_live(True)
         self.focus_window = None
 
     def focus_cb(self, widget, data=None):
+        self.preview.set_live(False)
+
         if self.focus_window:
             self.focus_window.present()
         else:
@@ -99,7 +68,6 @@ class MainWindow(Gtk.Window):
         self.preview = preview.Preview(self.camera)
         fixed.put(self.preview, 0, 0)
         self.preview.show()
-        self.preview.connect('motion_notify_event', self.preview_motion_cb)
 
         eb = Gtk.EventBox()
         fixed.put(eb, 0, 0)
@@ -116,21 +84,6 @@ class MainWindow(Gtk.Window):
         self.info = info.Info()
         self.info.set_size_request(preview_width, -1)
         eb.add(self.info)
-
-        eb = Gtk.EventBox()
-        fixed.put(eb, 20, 380)
-        eb.show()
-
-        self.play_image = Gtk.Image.new_from_stock(Gtk.STOCK_MEDIA_PLAY,
-                                                   Gtk.IconSize.SMALL_TOOLBAR)
-        self.pause_image = Gtk.Image.new_from_stock(Gtk.STOCK_MEDIA_PAUSE,
-                                                    Gtk.IconSize.SMALL_TOOLBAR)
-        self.live = Gtk.Button()
-        self.live.set_image(self.play_image)
-        self.live.set_tooltip_text("Start/stop live preview")
-        self.live.connect('clicked', self.live_cb, None)
-        eb.add(self.live)
-        self.live.show()
 
         self.toolbar = Gtk.HBox(False, 5)
         self.toolbar.set_border_width(3)
@@ -165,6 +118,8 @@ class MainWindow(Gtk.Window):
 
         self.info.msg('Welcome to Boon Nick Kirk Jon', 'v0.1, July 2017')
         self.progress.progress(0.2)
+
+        self.preview.set_live(True)
 
         self.show()
 
