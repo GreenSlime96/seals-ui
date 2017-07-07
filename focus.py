@@ -1,4 +1,7 @@
 import logging
+import numpy
+import cv2
+import time
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -7,7 +10,7 @@ from gi.repository import Gtk, GLib, GdkPixbuf
 import camera
 import rect
 
-frame_timeout = 50
+frame_timeout = 200
 
 class Focus(Gtk.Window):
     def destroy_cb(self, widget, data=None):
@@ -46,6 +49,15 @@ class Focus(Gtk.Window):
 
         if self.frame_buffer is frame:
             return
+
+        # start_time = time.time()
+        rgb_image = numpy.array(frame['data'], dtype="uint8").reshape((
+            frame['rows'],
+            frame['cols'],
+            3))
+        print("score %f" % cv2.Laplacian(rgb_image, cv2.CV_64F).var())
+        # print("time taken: %f" % (time.time() - start_time))
+
 
         pixbuf = GdkPixbuf.Pixbuf.new_from_data(bytes(frame['data']),
                                                 GdkPixbuf.Colorspace.RGB,

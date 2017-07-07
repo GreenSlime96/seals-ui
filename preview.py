@@ -248,6 +248,7 @@ class Preview(Gtk.EventBox):
                                                 frame['cols'] * 3,
                                                 None, None)
 
+
         # self.pixbuf = pixbuf
         self.image.set_from_pixbuf(pixbuf)
 
