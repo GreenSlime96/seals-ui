@@ -1,10 +1,19 @@
 import logging
+import cv2
 
 import gi
+
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
+gi.require_version('Vips', '8.0')
+from gi.repository import Vips
+
+import numpy as np
+from scipy.ndimage.filters import laplace
+
 import rect
+import time
 
 # inter-frame delay, in milliseconds
 # 50 gives around 20 fps and doesn't overload the machine too badly
@@ -16,6 +25,13 @@ select_width = 2
 # size of corner resize boxes
 select_corner = 15
 
+# laplacian filter for image scoring
+mask = Vips.Image.new_from_array([[0, 1,  0],
+                                  [1, -4,  1],
+                                  [0, 1,  0]])
+
+# scale the original image
+scale = 0.25
 
 # we have a small state machine for manipulating the select box
 def enum(**enums):
@@ -78,6 +94,15 @@ class Preview(Gtk.EventBox):
 
         cr.fill()
 
+    def draw_score(self):
+        window = self.image.get_window()
+        cr = window.cairo_create()
+
+        cr.set_font_size(13)
+        cr.move_to(20, 30)
+        cr.show_text(self.score)
+
+        self.score = None
 
     # expose on our Gtk.Image
     def expose_event(self, widget, event):
@@ -86,6 +111,9 @@ class Preview(Gtk.EventBox):
                            self.select_area, select_width)
             self.draw_rect(widget.get_style().black.to_floats(),
                            self.select_area, select_width - 1)
+
+        if self.score:
+            self.draw_score()
 
         return False
 
@@ -138,6 +166,7 @@ class Preview(Gtk.EventBox):
         image_height = self.image.get_allocation().height
 
         if self.select_state == SelectState.DRAG:
+            # print("drag")
             self.select_area.left = clip(0,
                                          x - self.drag_x,
                                          image_width - self.select_area.width)
@@ -146,6 +175,7 @@ class Preview(Gtk.EventBox):
                                         image_height - self.select_area.height)
             self.queue_draw()
         elif self.select_state == SelectState.RESIZE:
+            # print("resize")
             if self.resize_direction in [rect.Edge.SE, rect.Edge.E,
                                          rect.Edge.NE]:
                 right = x - self.drag_x
@@ -176,7 +206,7 @@ class Preview(Gtk.EventBox):
         elif self.select_state == SelectState.WAIT:
             window = self.image.get_window()
             direction = self.select_area.which_corner(select_corner, x, y)
-
+            # print("wait")
             if self.select_visible and \
                 direction != rect.Edge.NONE:
                 window.set_cursor(resize_cursor_shape[direction])
@@ -200,18 +230,15 @@ class Preview(Gtk.EventBox):
         """
 
         Gtk.EventBox.__init__(self)
+        self.times = []
 
         self.image = Gtk.Image()
         self.add(self.image)
         self.image.show()
 
-        # start with a blank 640x426 image, we overwrite this with jpg from
-        # the camera during live preview
-        # self.pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8,
-        #                                    1060, 706)
-        # self.image.set_from_pixbuf(self.pixbuf)
         self.image.set_app_paintable(True)
 
+        self.frame_image = None
         self.frame_buffer = None
         self.preview_timeout = 0
         self.camera = camera
@@ -229,27 +256,71 @@ class Preview(Gtk.EventBox):
         self.connect('motion-notify-event', self.motion_notify_event)
         self.connect('button-release-event', self.button_release_event)
 
+        self.score = None
+
     def grab_frame(self):
         logging.debug('grabbing frame ..')
         frame = self.camera.preview()
 
-        # print('frame size %d' % frame.getDataSize())
-        #
-        if self.frame_buffer is frame:
-            return
+        # if self.frame_buffer is frame:
+        #     return
 
-        # gbytes = GLib.Bytes.new_take(bytes(frame.getData()))
-        pixbuf = GdkPixbuf.Pixbuf.new_from_data(bytes(frame['data']),
+        start_time = time.time()
+
+        # image = Vips.Image.new_from_memory(frame['bytes'],
+        #                                    frame['cols'],
+        #                                    frame['rows'],
+        #                                    3,
+        #                                    Vips.BandFormat.UCHAR)
+        #
+        # small = image.shrink(4, 4)
+        # height, width, channels = (small.height, small.width, small.bands)
+        # self.frame_image = small.write_to_memory()
+        #
+        # roi = self.get_selection()
+        # if roi is not None:
+        #     roi = image.crop(roi.left, roi.top, roi.width, roi.height)
+        # else:
+        #     roi = image
+        #
+        # self.score = str(roi.conv(mask).deviate() ** 2)
+
+
+        image = frame['array']
+        small = cv2.resize(image, None, fx=scale, fy=scale)
+        height, width, channels = small.shape
+        self.frame_image = small.tobytes()
+        roi = self.get_selection()
+        if roi is not None:
+            roi = image[roi.left:roi.left+roi.width,
+                        roi.top:roi.top+roi.height]
+        else:
+            roi = image
+
+        roi = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+
+        # roi = Vips.Image.new_from_memory_copy(roi.tobytes(),
+        #                                       roi.shape[1],
+        #                                       roi.shape[0],
+        #                                       roi.shape[2],
+        #                                       Vips.BandFormat.UCHAR)
+        #
+        # self.score = str(roi.conv(mask).deviate() ** 2)
+        self.score = str(cv2.Laplacian(roi, cv2.CV_32F).var())
+        # self.score = print(laplace(roi).var())
+
+        # print('tt: %f' % (time.time() - start_time))
+        self.times.append(time.time() - start_time)
+
+        pixbuf = GdkPixbuf.Pixbuf.new_from_data(self.frame_image,
                                                 GdkPixbuf.Colorspace.RGB,
                                                 False,
                                                 8,
-                                                frame['cols'],
-                                                frame['rows'],
-                                                frame['cols'] * 3,
+                                                width,
+                                                height,
+                                                width * channels,
                                                 None, None)
 
-
-        # self.pixbuf = pixbuf
         self.image.set_from_pixbuf(pixbuf)
 
         self.frame_buffer = frame
@@ -266,16 +337,10 @@ class Preview(Gtk.EventBox):
         if not self.select_visible:
             return None
 
-        image_width = self.image.get_allocation().width
-        image_height = self.image.get_allocation().height
-        # return rect.Rect(1000 * self.select_area.left / image_width,
-        #                  1000 * self.select_area.top / image_height,
-        #                  1000 * self.select_area.width / image_width,
-        #                  1000 * self.select_area.height / image_height)
-        return rect.Rect(self.select_area.left * 4,
-                         self.select_area.top * 4,
-                         self.select_area.width * 4,
-                         self.select_area.height * 4)
+        return rect.Rect(self.select_area.left / scale,
+                         self.select_area.top / scale,
+                         self.select_area.width / scale,
+                         self.select_area.height / scale)
 
     def live_cb(self):
         self.grab_frame()
@@ -283,6 +348,8 @@ class Preview(Gtk.EventBox):
 
     def fps_cb(self):
         logging.debug('fps = %d', self.frame)
+        # print('fps = %d' % self.frame)
+        print([min(self.times), max(self.times), sum(self.times) / len(self.times)])
         self.frame = 0
         return True
 
@@ -294,7 +361,7 @@ class Preview(Gtk.EventBox):
         if live and self.preview_timeout == 0:
             logging.debug('starting timeout ..')
             self.preview_timeout = GLib.timeout_add(frame_timeout, self.live_cb)
-            self.fps_timeout = GLib.timeout_add(1000, self.fps_cb)
+            self.fps_timeout = GLib.timeout_add(5000, self.fps_cb)
 
         elif not live and self.preview_timeout != 0:
             GLib.source_remove(self.preview_timeout)

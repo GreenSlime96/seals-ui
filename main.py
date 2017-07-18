@@ -6,18 +6,23 @@ import shutil
 
 import argparse
 
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+# from thorpy.comm.discovery import discover_stages
+# from thorpy.message import *
 
 import preview
 import camera
 import progress
 import info
 import focus
+import rect
 # import config
 
-#1060 x 706 pixels for preview
+import gi
+
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+
+# 1060 x 706 pixels for preview
 preview_width = 1060
 
 class MainWindow(Gtk.Window):
@@ -31,6 +36,25 @@ class MainWindow(Gtk.Window):
 
         Gtk.main_quit()
 
+    def capture_cb(self, widget, data=None):
+        pass
+        # acceleration = self.stage.acceleration
+        # velocity = 2
+        #
+        # self.stage.min_velocity = velocity
+        # self.stage.max_velocity = velocity
+        #
+        # time.sleep(1)
+        #
+        #
+        # self.stage.position = self.stage.position + 360
+        #
+        # print("acceleration: %f" % self.stage.acceleration)
+        #
+        # for i in range(10):
+        #     print("current position: %f" % self.stage.position)
+        #     time.sleep(1)
+
     def focus_destroy_cb(self, widget, data=None):
         self.preview.set_live(True)
         self.focus_window = None
@@ -41,15 +65,25 @@ class MainWindow(Gtk.Window):
         if self.focus_window:
             self.focus_window.present()
         else:
-            self.focus_window = focus.Focus(self.camera,
-                                            self.preview.get_selection())
+            sel = self.preview.get_selection() or rect.Rect(0, 0, 1060 * 4, 706 * 4)
+
+            self.focus_window = focus.Focus(self.camera, sel)
             self.focus_window.connect('destroy', self.focus_destroy_cb)
+            self.focus_window.set_modal(True)
             self.focus_window.show()
 
 
     def __init__(self):
         Gtk.Window.__init__(self)
         self.connect('destroy', self.destroy_cb)
+        self.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
+        self.set_resizable(False)
+
+        # self.stage = next(discover_stages(), None)
+        #
+        # if self.stage is None:
+        #     logging.error("Unable to find THORLABS stage")
+        #     raise SystemExit(0)
 
         self.focus_window = None
         self.config_window = None
@@ -113,6 +147,18 @@ class MainWindow(Gtk.Window):
         button = Gtk.Button('Focus')
         button.set_tooltip_text("Focus camera automatically")
         button.connect('clicked', self.focus_cb, None)
+        self.toolbar.pack_start(button, False, False, 0)
+        button.show()
+
+        button = Gtk.Button('Configure')
+        button.set_tooltip_text("Focus camera automatically")
+        button.connect('clicked', self.focus_cb, None)
+        self.toolbar.pack_start(button, False, False, 0)
+        button.show()
+
+        button = Gtk.Button('Capture')
+        button.set_tooltip_text("Focus camera automatically")
+        button.connect('clicked', self.capture_cb, None)
         self.toolbar.pack_start(button, False, False, 0)
         button.show()
 
