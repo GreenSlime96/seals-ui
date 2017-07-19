@@ -31,10 +31,13 @@ class MainWindow(Gtk.Window):
         if self.focus_window:
             self.focus_window.destroy()
             self.focus_window = None
+            print("destroyed focus window")
 
         self.camera.release()
+        print("destroyed camera")
 
         Gtk.main_quit()
+        print("quit UI")
 
     def capture_cb(self, widget, data=None):
         pass
@@ -134,6 +137,9 @@ class MainWindow(Gtk.Window):
         self.toolbar.pack_end(button, False, False, 0)
         button.show()
 
+        label = Gtk.Label()
+
+
         button = Gtk.Button()
         menu_image = Gtk.Image.new_from_stock(Gtk.STOCK_PREFERENCES,
                                               Gtk.IconSize.SMALL_TOOLBAR)
@@ -150,22 +156,14 @@ class MainWindow(Gtk.Window):
         self.toolbar.pack_start(button, False, False, 0)
         button.show()
 
-        button = Gtk.Button('Configure')
-        button.set_tooltip_text("Focus camera automatically")
-        button.connect('clicked', self.focus_cb, None)
-        self.toolbar.pack_start(button, False, False, 0)
-        button.show()
-
         button = Gtk.Button('Capture')
         button.set_tooltip_text("Focus camera automatically")
         button.connect('clicked', self.capture_cb, None)
         self.toolbar.pack_start(button, False, False, 0)
         button.show()
 
-        self.info.msg('Welcome to Boon Nick Kirk Jon', 'v0.1, July 2017')
+        self.info.msg('Sharing Life\'s Happiness', 'v0.1, July 2017')
         self.progress.progress(0.2)
-
-        self.preview.set_live(True)
 
         self.show()
 

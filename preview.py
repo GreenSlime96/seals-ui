@@ -2,6 +2,7 @@ import logging
 import cv2
 
 import gi
+import cairo
 
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
@@ -32,6 +33,11 @@ mask = Vips.Image.new_from_array([[0, 1,  0],
 
 # scale the original image
 scale = 0.25
+
+# font face
+font_face = cairo.ToyFontFace("sans-serif",
+                              cairo.FONT_SLANT_NORMAL,
+                              cairo.FONT_WEIGHT_BOLD)
 
 # we have a small state machine for manipulating the select box
 def enum(**enums):
@@ -94,15 +100,18 @@ class Preview(Gtk.EventBox):
 
         cr.fill()
 
-    def draw_score(self):
+    def draw_text(self, left, top, text):
         window = self.image.get_window()
         cr = window.cairo_create()
 
-        cr.set_font_size(13)
-        cr.move_to(20, 30)
-        cr.show_text(self.score)
-
-        self.score = None
+        cr.set_font_size(20)
+        cr.move_to(left + 3, top + 20)
+        cr.text_path(text)
+        cr.set_source_rgb(1, 0, 0)
+        cr.fill_preserve()
+        cr.set_source_rgb(0, 0, 0)
+        cr.set_line_width(.25)
+        cr.stroke()
 
     # expose on our Gtk.Image
     def expose_event(self, widget, event):
@@ -112,8 +121,10 @@ class Preview(Gtk.EventBox):
             self.draw_rect(widget.get_style().black.to_floats(),
                            self.select_area, select_width - 1)
 
-        if self.score:
-            self.draw_score()
+            if self.score is not None:
+                self.draw_text(self.select_area.left,
+                               self.select_area.top,
+                               self.score)
 
         return False
 
@@ -148,11 +159,14 @@ class Preview(Gtk.EventBox):
 
         elif self.select_state == SelectState.WAIT and \
             not self.select_visible:
+            image_width = self.image.get_allocation().width
+            image_height = self.image.get_allocation().height
+
             self.select_visible = True
-            self.select_area.left = x
-            self.select_area.top = y
-            self.select_area.width = 1
-            self.select_area.height = 1
+            self.select_area.width = 3 * select_corner
+            self.select_area.height = 3 * select_corner
+            self.select_area.left = min(x, image_width-self.select_area.width)
+            self.select_area.top = min(y, image_height-self.select_area.height)
             self.select_state = SelectState.RESIZE
             self.resize_direction = rect.Edge.SE
             self.drag_x = 1
@@ -179,22 +193,26 @@ class Preview(Gtk.EventBox):
             if self.resize_direction in [rect.Edge.SE, rect.Edge.E,
                                          rect.Edge.NE]:
                 right = x - self.drag_x
-                self.select_area.width = right - self.select_area.left
+                self.select_area.width = max(right - self.select_area.left,
+                                             3 * select_corner)
 
             if self.resize_direction in [rect.Edge.SW, rect.Edge.S,
                                          rect.Edge.SE]:
                 bottom = y - self.drag_y
-                self.select_area.height = bottom - self.select_area.top
+                self.select_area.height = max(bottom - self.select_area.top,
+                                              3 * select_corner)
 
             if self.resize_direction in [rect.Edge.SW, rect.Edge.W,
                                          rect.Edge.NW]:
-                left = x - self.drag_x
+                left = min(x - self.drag_x,
+                           self.select_area.right() - 3 * select_corner)
                 self.select_area.width = self.select_area.right() - left
                 self.select_area.left = left
 
             if self.resize_direction in [rect.Edge.NW, rect.Edge.N,
                                          rect.Edge.NE]:
-                top = y - self.drag_y
+                top = min(y - self.drag_y,
+                          self.select_area.bottom() - 3 * select_corner)
                 self.select_area.height = self.select_area.bottom() - top
                 self.select_area.top = top
 
@@ -290,14 +308,23 @@ class Preview(Gtk.EventBox):
         small = cv2.resize(image, None, fx=scale, fy=scale)
         height, width, channels = small.shape
         self.frame_image = small.tobytes()
+
         roi = self.get_selection()
         if roi is not None:
-            roi = image[roi.left:roi.left+roi.width,
-                        roi.top:roi.top+roi.height]
+            roi = image[roi.top:roi.top + roi.height,
+                        roi.left:roi.left + roi.width]
         else:
-            roi = image
+            roi = small
 
         roi = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+        self.score = "Score: {:.2f}".format(
+            cv2.Laplacian(roi, cv2.CV_32F).var())
+
+
+        # try:
+        #     roi = cv2.resize(roi, None, fx=scale, fy=scale)
+        # except:
+        #     print(roi.shape)
 
         # roi = Vips.Image.new_from_memory_copy(roi.tobytes(),
         #                                       roi.shape[1],
@@ -306,7 +333,6 @@ class Preview(Gtk.EventBox):
         #                                       Vips.BandFormat.UCHAR)
         #
         # self.score = str(roi.conv(mask).deviate() ** 2)
-        self.score = str(cv2.Laplacian(roi, cv2.CV_32F).var())
         # self.score = print(laplace(roi).var())
 
         # print('tt: %f' % (time.time() - start_time))
