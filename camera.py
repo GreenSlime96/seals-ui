@@ -47,24 +47,25 @@ class Camera:
 
         # Temporary buffer
         self.buffer = None
+        self.callback = None
 
         # Declare camera modes here
         self.mode_current = None
 
-        self.mode_preview = None
+        self.mode_default = None
         self.mode_focus = None
         self.mode_capture = None
 
-        image = cv2.imread('demo.jpg', cv2.IMREAD_COLOR)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        height, width, channels = image.shape
-
-        self.buffer = {'cols': width,
-                       'array': image,
-                       'bytes': image.tobytes(),
-                       'dataSize': image.size,
-                       'rows': height,
-                       'stride': -1}
+        # image = cv2.imread('demo-1.jpg', cv2.IMREAD_COLOR)
+        # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # height, width, channels = image.shape
+        #
+        # self.buffer = {'cols': width,
+        #                'array': image,
+        #                'bytes': image.tobytes(),
+        #                'dataSize': image.size,
+        #                'rows': height,
+        #                'stride': -1}
 
     def connect(self):
         """Connect to the camera.
@@ -80,36 +81,12 @@ class Camera:
                 self.release()
                 raise Error('No cameras detected')
 
-            # # look for first camera matching 'Grasshopper3 GS3-U3-120S6C'
-            # for i in range(numCams):
-            #     try:
-            #         uid = self.busManager.getCameraFromIndex(i)
-            #     except PyCapture2.Fc2error:
-            #         raise Error('Unable to connect to camera')
-            #     else:
-            #         self.camera.connect(uid)
-            #         camInfo = self.camera.getCameraInfo()
-            #
-            #         print('Found model ', camInfo.modelName)
-            #
-            #         if camInfo.modelName in supported_cameras:
-            #             break
-            #         else:
-            #             self.camera.disconnect()
-            #
-            # if not self.camera.isConnected:
-            #     raise Error('No suitable camera found')
-
             try:
                 uid = self.busManager.getCameraFromIndex(0)
                 self.camera.connect(uid)
                 self.camera.startCapture()
             except PyCapture2.Fc2error:
                 raise Error('Unable to connect to camera')
-
-
-            # set camera properties to preset...
-            # self.camera.setProperty()
 
             # check if PREVIEW is supported
             fmt7info, supported = self.camera.getFormat7Info(PyCapture2.
@@ -143,12 +120,24 @@ class Camera:
             self.camera.disconnect()
 
     def capture_cb(self, image):
+        if self.callback:
+            self.callback(image)
+
+        timestamp = image.getTimeStamp()
+
         self.buffer = {'cols': image.getCols(),
                        'array': image.__array__(),
-                       'bytes': image.__bytes__(),
-                       'dataSize': image.getDataSize(),
                        'rows': image.getRows(),
-                       'stride': image.getStride()}
+                       'stride': image.getStride(),
+                       'seconds': timestamp.seconds,
+                       'microSeconds': timestamp.microSeconds}
+
+    def add_observer(self, obs):
+        if obs not in self.callbacks:
+            self.callbacks.append(obs)
+
+    def del_observer(self, obs):
+        self.callbacks.remove(obs)
 
     def ensure_mode(self, mode):
         if self.mode_current != mode:
@@ -172,37 +161,7 @@ class Camera:
         """
         logging.debug('** camera preview')
 
-        # self.connect()
-        # self.ensure_mode(self.mode_preview)
-
-        return self.buffer
-
-    def focus_area(self, selection):
         self.connect()
-
-        fmt7info, supported = self.camera.getFormat7Info(PyCapture2.
-                                                         MODE.MODE_0)
-
-        fmt7imgSet = PyCapture2.Format7ImageSettings(PyCapture2.MODE.MODE_0,
-                                                     selection.left,
-                                                     selection.top,
-                                                     selection.width,
-                                                     selection.height,
-                                                     PyCapture2.
-                                                     PIXEL_FORMAT.RGB8)
-
-        fmt7pktInf, isValid = self.camera.validateFormat7Settings(fmt7imgSet)
-
-        if not isValid:
-            raise Error('Camera does not support Preview mode')
-
-        self.mode_focus = (fmt7pktInf.recommendedBytesPerPacket, fmt7imgSet)
-
-
-    def focus(self):
-        logging.debug('** camera focus')
-
-        self.connect()
-        self.ensure_mode(self.mode_focus)
+        self.ensure_mode(self.mode_preview)
 
         return self.buffer

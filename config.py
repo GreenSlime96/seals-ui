@@ -14,358 +14,253 @@ class Config(Gtk.Window):
         if self.refresh_timeout:
             GLib.source_remove(self.refresh_timeout)
             self.refresh_timeout = 0
-        self.presets_save(os.path.join(self.options.tempdir, 'settings'))
+
         self.destroy()
 
-    def align_label(self, sg, label):
-        hb = Gtk.HBox(False, 5)
-        hb.show()
+    def refresh_item(self, name):
+        self.updating[name] = True
 
-        l = Gtk.Label(label)
-        l.set_alignment(1, 0.5)
-        sg.add_widget(l)
-        hb.pack_start(l, False)
-        l.show()
+        p = self.camera.getProperty(name)
+        pi = self.camera.getPropertyInfo(name)
 
-        return hb
+        onoff = self.onoff_table[p.type]
+        auto = self.auto_table[p.type]
+        value = self.value_table[p.type]
 
-    def widget_set(self, widget, item, value):
-        if isinstance(widget, Gtk.Scale):
-            widget.set_value(value)
-        elif isinstance(widget, Gtk.Entry):
-            widget.set_text(value)
-        elif isinstance(widget, Gtk.ComboBox):
-            choices = item.get_choices()
-            if value in choices:
-                widget.set_active(choices.index(value))
-        elif isinstance(widget, Gtk.CheckButton):
-            widget.set_active(value)
+        min_val = pi.absMin
+        max_val = pi.absMax
+        val = p.absValue
+
+        if not p.absControl:
+            min_val = pi.min
+            max_val = pi.max
+            val = p.valueA
+
+        if pi.onOffSupported:
+            onoff.set_active(p.onOff)
+            onoff.show()
         else:
-            logging.error('unknown widget type')
+            onoff.hide()
 
-    def widget_get(self, widget, item):
-        if isinstance(widget, Gtk.Scale):
-            return widget.get_value()
-        elif isinstance(widget, Gtk.Entry):
-            return widget.get_text()
-        elif isinstance(widget, Gtk.ComboBox):
-            return item.get_choices()[widget.get_active()]
-        elif isinstance(widget, Gtk.CheckButton):
-            return widget.get_active()
+        if pi.autoSupported:
+            auto.set_active(p.autoManualMode)
+            auto.show()
         else:
-            logging.error('unknown widget type')
-            return None
+            auto.hide()
 
-    def get_settings(self, item):
-        """Get the settings from a tree of items as a hash."""
-        settings = {}
-        settings[item.get_name()] = item.get_value()
-        for child in item.get_children():
-            settings.update(self.get_settings(child))
-        return settings
+        if name == PyCapture2.PROPERTY_TYPE.WHITE_BALANCE:
+            value[0].configure(p.valueA, min_val, max_val, 1, 0, 0)
+            value[1].configure(p.valueB, min_val, max_val, 1, 0, 0)
+        else:
+            value.configure(val, min_val, max_val, 1, 0, 0)
 
-    def set_settings(self, settings):
-        """Apply a set of settings."""
-        root_widget = self.config.get_root_widget()
-        for name in settings:
-            item = root_widget.get_child_by_name(name)
-            # we can't set readonly items
-            if not item.get_readonly():
-                item.set_value(settings[name])
-        try:
-            self.config.set_config()
-        except camera.Error as e:
-            logging.error('unable to set settings, %s', repr(e))
-        self.refresh()
-
-    def refresh_item(self, item):
-        name = item.get_name()
-        # not all camera settings will have GUI widgets
-        if name in self.widget_table:
-            widget = self.widget_table[name]
-            self.widget_set(widget, item, item.get_value())
-            widget.set_sensitive(not item.get_readonly())
-        for child in item.get_children():
-            self.refresh_item(child)
+        self.updating[name] = False
 
     def refresh(self):
-        """Update the GUI from the camera."""
-        self.config.refresh()
-        self.refresh_item(self.config.get_root_widget())
+        for p in self.properties.keys():
+            self.refresh_item(p)
 
-    def refresh_cb(self, widget, data = None):
+    def refresh_cb(self, widget, data=None):
         self.refresh()
 
     def refresh_queue_cb(self):
         self.refresh()
-        return False
-
-    def refresh_queue(self):
-        if self.refresh_timeout:
-            GLib.source_remove(self.refresh_timeout)
-            self.refresh_timeout = 0
-        self.refresh_timeout = GLib.timeout_add(500, self.refresh_queue_cb)
-
-    def preset_add(self, name, settings):
-        """Record the current camera settings as a named preset."""
-        self.preset_table[name] = settings
-        if not name in self.preset_names:
-            self.preset_names += [name]
-            self.preset_picker.append_text(name)
-        self.preset_picker.set_active(self.preset_names.index(name))
-
-    def preset_remove(self, name):
-        """Remove a named preset."""
-        if name in self.preset_names:
-            index = self.preset_names.index(name)
-            del self.preset_names[index]
-            del self.preset_table[name]
-            self.preset_picker.remove_text(index)
-
-    def presets_load(self, filename):
-        """Load presets from the named file."""
-        try:
-            f = file(filename, 'r')
-        except IOError:
-            pass
-        else:
-            try:
-                table, names, number = pickle.load(f)
-            except ValueError as e:
-                logging.debug('unpicking error %s', repr(e))
-            else:
-                self.preset_table = table
-                self.preset_names = names
-                self.preset_number = number
-            finally:
-                f.close()
-
-    def presets_save(self, filename):
-        """Save all presets to the named file."""
-        try:
-            f = file(filename, 'w')
-        except IOError:
-            pass
-        else:
-            obj = [self.preset_table, self.preset_names, self.preset_number]
-            pickle.dump(obj, f)
-            f.close()
-
-    def preset_picker_cb(self, widget, data = None):
-        current = self.preset_picker.get_active()
-        if current >= 0:
-            preset_name = self.preset_names[current]
-            settings = self.preset_table[preset_name]
-            self.set_settings(settings)
-
-    def add_cb(self, widget, data = None):
-        name = 'preset-%d' % self.preset_number
-        self.preset_number += 1
-        settings = self.get_settings(self.config.get_root_widget())
-        self.preset_add(name, settings)
-
-    def remove_cb(self, widget, data = None):
-        current = self.preset_picker.get_active()
-        if current >= 0:
-            name = self.preset_names[current]
-            self.preset_remove(name)
+        return True
 
     def update_item_cb(self, widget, name):
-        item = self.config.get_root_widget().get_child_by_name(name)
-        new_value = self.widget_get(widget, item)
-        old_value = item.get_value()
-        logging.debug('update_item_cb: %s, new = %s, old = %s',
-                name, str(new_value), str(old_value))
-        if new_value != old_value:
-            item.set_value(new_value)
-            try:
-                self.config.set_config()
-            except camera.Error as e:
-                logging.debug('set error, restoring old value, %s', str(e))
-                item.set_value(old_value)
-                # we've restored the old value, so next time we update the
-                # camera we don't need to resend this setting
-                item.set_changed(False)
-                # restore the old widget setting
-                # this will cause us to be triggered again, but the new!=old
-                # test above will prevent looping
-                self.widget_set(widget, item, old_value)
-            else:
-                # successful change ... changing one setting may change many
-                # others, so we have to refresh the GUI from the camera
-                self.refresh_queue()
+        if self.updating[name]:
+            return
 
-                # we've changed a value, so we can no longer be showing one of
-                # the presets
-                self.preset_picker.set_active(-1)
+        info = self.properties[name]
 
-    def build_page(self, section, vb):
-        sg = Gtk.SizeGroup(Gtk.SIZE_GROUP_HORIZONTAL)
+        onoff = self.onoff_table[name]
+        auto = self.auto_table[name]
+        value = self.value_table[name]
 
-        for item in section.get_children():
-            wtype = item.get_wtype()
-            name = item.get_name()
-            label = item.get_label()
-            value = item.get_value()
+        kwargs = {'type': name,
+                  'onOff': onoff.get_active(),
+                  'autoManualMode': auto.get_active()}
 
-            if value == None:
-                continue
+        if name == PyCapture2.PROPERTY_TYPE.WHITE_BALANCE:
+            kwargs['valueA'] = value[0].get_value()
+            kwargs['valueB'] = value[1].get_value()
 
-            widget = None
+        elif info.absValSupported:
+            kwargs['absValue'] = value.get_value()
 
-            if wtype == camera.GP_WIDGET_TOGGLE:
-                widget = Gtk.CheckButton(label)
-                self.widget_table[name] = widget
-                widget.set_active(value)
-                widget.connect('toggled', self.update_item_cb, name)
+        else:
+            kwargs['valueA'] = value.get_value()
 
-            if wtype == camera.GP_WIDGET_TEXT:
-                widget = self.align_label(sg, label)
-                b = Gtk.Entry()
-                self.widget_table[name] = b
-                b.set_text(value)
-                b.connect('activate', self.update_item_cb, name)
-                widget.pack_start(b, True)
-                b.show()
+        self.camera.setProperty(**kwargs)
 
-            if wtype in [camera.GP_WIDGET_MENU, camera.GP_WIDGET_RADIO]:
-                choices = item.get_choices()
-                widget = self.align_label(sg, label)
-                b = Gtk.combo_box_new_text()
-                self.widget_table[name] = b
-                for i in choices:
-                    b.append_text(i)
-                if value in choices:
-                    b.set_active(choices.index(value))
-                b.connect('changed', self.update_item_cb, name)
-                widget.pack_start(b, True)
-                b.show()
-
-            if wtype == camera.GP_WIDGET_RANGE:
-                wmin, wmax, winc = item.get_range()
-                if wmin == wmax:
-                    continue
-                widget = self.align_label(sg, label)
-                b = Gtk.HScale()
-                self.widget_table[name] = b
-                b.set_value(value)
-                b.set_range(wmin, wmax)
-                b.set_increments(winc, 4 * winc)
-                b.connect('value_changed', self.update_item_cb, name)
-                widget.pack_start(b, True)
-                b.show()
-
-            if widget != None:
-                widget.show()
-                widget.set_sensitive(not item.get_readonly())
-                vb.pack_start(widget, False);
-
-    def __init__(self, options, cam):
+    def __init__(self, camera):
         Gtk.Window.__init__(self)
         self.connect('destroy', self.destroy_cb)
 
-        self.options = options
-        self.camera = cam
-        self.config = camera.Config(self.camera)
-
+        # retrieve raw camera from the camera wrapper
+        self.camera = camera.camera
+        self.properties = {}
         self.refresh_timeout = 0
+        self.updating = {}
 
-        # a hash from item name to the widget that displays it
-        self.widget_table = {}
+        # get all properties of the camera and exclude private members
+        # output as INT: KEY instead
+        self.property_types = {v: k for k, v in
+                               vars(PyCapture2.PROPERTY_TYPE).items()
+                               if not k.startswith('_') and type(v) is int}
 
-        # a hash from preset name to a setting hash, plus a list of current
-        # preset name in traverse order
-        self.preset_table = {}
-        self.preset_names = []
+        # build properties list
+        for k, v in self.property_types.items():
+            if k in (PyCapture2.PROPERTY_TYPE.TRIGGER_MODE,
+                     PyCapture2.PROPERTY_TYPE.TRIGGER_DELAY,
+                     PyCapture2.PROPERTY_TYPE.TEMPERATURE,
+                     PyCapture2.PROPERTY_TYPE.UNSPECIFIED_PROPERTY_TYPE):
+                continue
 
-        # the next preset number we allocate
-        self.preset_number = 1
+            property_info = self.camera.getPropertyInfo(k)
 
-        self.presets_load(os.path.join(self.options.tempdir, 'settings'))
+            if property_info.present:
+                self.properties[k] = property_info
 
-        self.set_title(self.config.get_root_widget().get_label())
+        # build UI - map UI element to widget ID
+        self.value_table = {}
+        self.auto_table = {}
+        self.onoff_table = {}
 
-        self.set_default_size(-1, 300)
+        self.set_default_size(800, -1)
 
-        vbox = Gtk.VBox()
-        vbox.show()
-        self.add(vbox)
+        # box = Gtk.Box()
+        # box.show()
+        # self.add(box)
 
-        book = Gtk.Notebook()
-        book.set_border_width(3)
-        vbox.pack_start(book, True)
-        book.show()
+        grid = Gtk.Grid()
+        grid.set_row_spacing(5)
+        grid.set_column_spacing(5)
+        grid.set_border_width(10)
+        self.add(grid)
 
-        for section in self.config.get_root_widget().get_children():
-            page = Gtk.ScrolledWindow()
-            page.show()
+        # draw header things
+        b = Gtk.Label("Auto")
+        grid.attach(b, 4, 0, 1, 1)
 
-            vb = Gtk.VBox(False, 3)
-            vb.set_border_width(3)
-            page.add_with_viewport(vb)
-            vb.show()
+        b = Gtk.Label("On/Off")
+        grid.attach(b, 5, 0, 1, 1)
 
-            self.build_page(section, vb)
+        i = 1
+        for k, p in self.properties.items():
+            name = self.property_types[k].replace('_', ' ').title()
 
-            label = Gtk.Label (section.get_label())
-            label.show()
+            # name label!
+            b = Gtk.Label()
+            b.set_markup("<b>%s</b>" % name)
+            grid.attach(b, 0, i, 1, 1)
 
-            book.append_page(page, label)
+            # use absoulte or relative values
+            min_val = p.absMin if p.absValSupported else p.min
+            max_val = p.absMax if p.absValSupported else p.max
 
-        toolbar = Gtk.HBox(False, 5)
-        toolbar.set_border_width(3)
-        vbox.pack_start(toolbar, False)
-        toolbar.show()
+            # set the adjustment corresponding to the thingus
+            if k == PyCapture2.PROPERTY_TYPE.WHITE_BALANCE:
+                a = (Gtk.Adjustment.new(min_val, min_val, max_val, 1, 0, 0),
+                     Gtk.Adjustment.new(min_val, min_val, max_val, 1, 0, 0))
 
-        button = Gtk.Button()
-        quit_image = Gtk.image_new_from_stock(Gtk.STOCK_QUIT,
-                        Gtk.ICON_SIZE_SMALL_TOOLBAR)
-        quit_image.show()
-        button.set_tooltip_text("Close settings")
-        button.connect('clicked', self.destroy_cb, None)
-        button.add(quit_image)
-        toolbar.pack_end(button, False, False)
-        button.show()
+                a[0].connect('value_changed', self.update_item_cb, k)
+                a[1].connect('value_changed', self.update_item_cb, k)
+            else:
+                a = Gtk.Adjustment.new(min_val, min_val, max_val, 1, 0, 0)
+                a.connect('value_changed', self.update_item_cb, k)
 
-        button = Gtk.Button()
-        refresh_image = Gtk.image_new_from_stock(Gtk.STOCK_REFRESH,
-                        Gtk.ICON_SIZE_SMALL_TOOLBAR)
-        refresh_image.show()
-        button.set_tooltip_text("Reload settings from camera")
-        button.connect('clicked', self.refresh_cb, None)
-        button.add(refresh_image)
-        toolbar.pack_start(button, False, False)
-        button.show()
+            self.value_table[k] = a
 
-        self.preset_picker = Gtk.combo_box_new_text()
-        for name in self.preset_table:
-            self.preset_picker.append_text(name)
-        self.preset_picker.set_active(-1)
-        self.preset_picker.set_tooltip_text("Load settings from preset")
-        self.preset_picker.connect('changed', self.preset_picker_cb, None)
-        toolbar.pack_start(self.preset_picker, False, False)
-        self.preset_picker.show()
+            # slider-scale
+            if k == PyCapture2.PROPERTY_TYPE.WHITE_BALANCE:
+                box = Gtk.VBox.new(True, 5)
 
-        button = Gtk.Button()
-        add_image = Gtk.image_new_from_stock(Gtk.STOCK_ADD,
-                        Gtk.ICON_SIZE_SMALL_TOOLBAR)
-        add_image.show()
-        button.set_tooltip_text("Save current settings as new preset")
-        button.connect('clicked', self.add_cb, None)
-        button.add(add_image)
-        toolbar.pack_start(button, False, False)
-        button.show()
+                b = Gtk.Scale.new(Gtk.Orientation.HORIZONTAL, a[0])
+                box.pack_start(b, True, True, 0)
+                b.set_draw_value(False)
+                b.set_hexpand(True)
 
-        button = Gtk.Button()
-        remove_image = Gtk.image_new_from_stock(Gtk.STOCK_REMOVE,
-                        Gtk.ICON_SIZE_SMALL_TOOLBAR)
-        remove_image.show()
-        button.set_tooltip_text("Remove current preset")
-        button.connect('clicked', self.remove_cb, None)
-        button.add(remove_image)
-        toolbar.pack_start(button, False, False)
-        button.show()
+                b = Gtk.Scale.new(Gtk.Orientation.HORIZONTAL, a[1])
+                box.pack_start(b, True, True, 0)
+                b.set_draw_value(False)
+                b.set_hexpand(True)
 
-        # make a preset for what we had at startup
-        settings = self.get_settings(self.config.get_root_widget())
-self.preset_add('startup', settings)
+                b = box
+            else:
+                b = Gtk.Scale.new(Gtk.Orientation.HORIZONTAL, a)
+                b.set_draw_value(False)
+                b.set_hexpand(True)
+
+            grid.attach(b, 1, i, 1, 1)
+
+            # spinner for finer-grained control
+            if k == PyCapture2.PROPERTY_TYPE.WHITE_BALANCE:
+                box = Gtk.VBox.new(True, 5)
+
+                b = Gtk.SpinButton.new(a[0], 1, 1)
+                box.pack_start(b, True, True, 0)
+
+                b = Gtk.SpinButton.new(a[1], 1, 1)
+                box.pack_start(b, True, True, 0)
+
+                b = box
+            else:
+                b = Gtk.SpinButton.new(a, 1, 3 if p.absValSupported else 1)
+
+            grid.attach(b, 2, i, 1, 1)
+
+            # units label
+            b = Gtk.Label(p.unitAbbr.decode('ascii'))
+            b.set_xalign(0)
+            grid.attach(b, 3, i, 1, 1)
+
+            # auto-manual button
+            b = Gtk.CheckButton()
+            b.set_halign(Gtk.Align.CENTER)
+            b.connect('toggled', self.update_item_cb, k)
+            self.auto_table[k] = b
+            grid.attach(b, 4, i, 1, 1)
+
+            # on-off button
+            b = Gtk.CheckButton()
+            b.set_halign(Gtk.Align.CENTER)
+            b.connect('toggled', self.update_item_cb, k)
+            self.onoff_table[k] = b
+            grid.attach(b, 5, i, 1, 1)
+
+            i = i + 1
+
+        grid.show_all()
+        self.refresh()
+
+        self.refresh_timeout = GLib.timeout_add(500, self.refresh_queue_cb)
+
+
+
+        # sg = Gtk.SizeGroup(Gtk.SizeGroupMode.HORIZONTAL)
+        #
+        # for p in self.properties:
+        #     name = self.property_types[p.type].replace('_', ' ').title()
+        #     value = p.type
+        #
+        #     min_val = p.absMin if p.absValSupported else p.min
+        #     max_val = p.absMax if p.absValSupported else p.max
+        #
+        #     print(name, min_val, max_val, p.autoSupported, p.manualSupported)
+        #
+        #     widget = self.align_label(sg, name)
+        #     b = Gtk.HScale.new_with_range(min_val, max_val, 1)
+        #     b.set_draw_value(False)
+        #     widget.pack_start(b, True, True, 10)
+        #     b.show()
+        #
+        #     b = Gtk.CheckButton()
+        #     widget.pack_start(b, False, False, 10)
+        #     b.show()
+        #
+        #     b = Gtk.CheckButton()
+        #     widget.pack_start(b, False, False, 10)
+        #     b.show()
+        #
+        #     vbox.pack_start(widget, True, True, 10)

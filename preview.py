@@ -1,17 +1,14 @@
 import logging
 import cv2
 
+import numpy as np
 import gi
-import cairo
 
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
 gi.require_version('Vips', '8.0')
 from gi.repository import Vips
-
-import numpy as np
-from scipy.ndimage.filters import laplace
 
 import rect
 import time
@@ -26,18 +23,8 @@ select_width = 2
 # size of corner resize boxes
 select_corner = 15
 
-# laplacian filter for image scoring
-mask = Vips.Image.new_from_array([[0, 1,  0],
-                                  [1, -4,  1],
-                                  [0, 1,  0]])
-
 # scale the original image
 scale = 0.25
-
-# font face
-font_face = cairo.ToyFontFace("sans-serif",
-                              cairo.FONT_SLANT_NORMAL,
-                              cairo.FONT_WEIGHT_BOLD)
 
 # we have a small state machine for manipulating the select box
 def enum(**enums):
@@ -100,19 +87,6 @@ class Preview(Gtk.EventBox):
 
         cr.fill()
 
-    def draw_text(self, left, top, text):
-        window = self.image.get_window()
-        cr = window.cairo_create()
-
-        cr.set_font_size(20)
-        cr.move_to(left + 3, top + 20)
-        cr.text_path(text)
-        cr.set_source_rgb(1, 0, 0)
-        cr.fill_preserve()
-        cr.set_source_rgb(0, 0, 0)
-        cr.set_line_width(.25)
-        cr.stroke()
-
     # expose on our Gtk.Image
     def expose_event(self, widget, event):
         if self.select_visible:
@@ -120,12 +94,6 @@ class Preview(Gtk.EventBox):
                            self.select_area, select_width)
             self.draw_rect(widget.get_style().black.to_floats(),
                            self.select_area, select_width - 1)
-
-            if self.score is not None:
-                self.draw_text(self.select_area.left,
-                               self.select_area.top,
-                               self.score)
-
         return False
 
     def button_press_event(self, widget, event):
@@ -180,7 +148,6 @@ class Preview(Gtk.EventBox):
         image_height = self.image.get_allocation().height
 
         if self.select_state == SelectState.DRAG:
-            # print("drag")
             self.select_area.left = clip(0,
                                          x - self.drag_x,
                                          image_width - self.select_area.width)
@@ -189,7 +156,6 @@ class Preview(Gtk.EventBox):
                                         image_height - self.select_area.height)
             self.queue_draw()
         elif self.select_state == SelectState.RESIZE:
-            # print("resize")
             if self.resize_direction in [rect.Edge.SE, rect.Edge.E,
                                          rect.Edge.NE]:
                 right = x - self.drag_x
@@ -224,7 +190,6 @@ class Preview(Gtk.EventBox):
         elif self.select_state == SelectState.WAIT:
             window = self.image.get_window()
             direction = self.select_area.which_corner(select_corner, x, y)
-            # print("wait")
             if self.select_visible and \
                 direction != rect.Edge.NONE:
                 window.set_cursor(resize_cursor_shape[direction])
@@ -280,31 +245,12 @@ class Preview(Gtk.EventBox):
         logging.debug('grabbing frame ..')
         frame = self.camera.preview()
 
-        # if self.frame_buffer is frame:
-        #     return
+        if self.frame_buffer is frame:
+            return
 
         start_time = time.time()
 
-        # image = Vips.Image.new_from_memory(frame['bytes'],
-        #                                    frame['cols'],
-        #                                    frame['rows'],
-        #                                    3,
-        #                                    Vips.BandFormat.UCHAR)
-        #
-        # small = image.shrink(4, 4)
-        # height, width, channels = (small.height, small.width, small.bands)
-        # self.frame_image = small.write_to_memory()
-        #
-        # roi = self.get_selection()
-        # if roi is not None:
-        #     roi = image.crop(roi.left, roi.top, roi.width, roi.height)
-        # else:
-        #     roi = image
-        #
-        # self.score = str(roi.conv(mask).deviate() ** 2)
-
-
-        image = frame['array']
+        image = np.copy(frame['array'])
         small = cv2.resize(image, None, fx=scale, fy=scale)
         height, width, channels = small.shape
         self.frame_image = small.tobytes()
@@ -317,9 +263,9 @@ class Preview(Gtk.EventBox):
             roi = small
 
         roi = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
-        self.score = "Score: {:.2f}".format(
-            cv2.Laplacian(roi, cv2.CV_32F).var())
+        score = cv2.Laplacian(roi, cv2.CV_32F).var()
 
+        self.score_label.set_text("Score: {:.2f}".format(score))
 
         # try:
         #     roi = cv2.resize(roi, None, fx=scale, fy=scale)
@@ -374,8 +320,8 @@ class Preview(Gtk.EventBox):
 
     def fps_cb(self):
         logging.debug('fps = %d', self.frame)
-        # print('fps = %d' % self.frame)
-        print([min(self.times), max(self.times), sum(self.times) / len(self.times)])
+        print('fps = %d' % self.frame)
+        # print([min(self.times), max(self.times), sum(self.times) / len(self.times)])
         self.frame = 0
         return True
 
@@ -387,7 +333,7 @@ class Preview(Gtk.EventBox):
         if live and self.preview_timeout == 0:
             logging.debug('starting timeout ..')
             self.preview_timeout = GLib.timeout_add(frame_timeout, self.live_cb)
-            self.fps_timeout = GLib.timeout_add(5000, self.fps_cb)
+            self.fps_timeout = GLib.timeout_add(1000, self.fps_cb)
 
         elif not live and self.preview_timeout != 0:
             GLib.source_remove(self.preview_timeout)
