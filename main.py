@@ -3,6 +3,7 @@ import logging
 import time
 import sys
 import shutil
+import cv2
 
 import argparse
 
@@ -36,7 +37,7 @@ class MainWindow(Gtk.Window):
             self.config_window.destroy()
             self.config_window = None
 
-        print("destroying")
+        print("love baobei")
 
         self.camera.release()
 
@@ -51,70 +52,93 @@ class MainWindow(Gtk.Window):
             self.config_window.present()
         else:
             self.config_window = config.Config(self.camera)
+            self.config_window.connect('destroy', self.focus_destroy_cb)
+            self.config_window.set_modal(True)
             self.config_window.show()
 
     def capture_task(self, image):
-        start = time.time()
         position = self.stage.position
-        end = time.time()
 
-        print(end - start)
+        # print(end - start)
         # time = timestamp.seconds + timestamp.microSeconds * 1e-06
 
-        if self.busy:
-            old_time = self.busy[1]
-            new_time = time.time()
+        # if self.busy:
+        #     old_time = self.busy[1]
+        #     new_time = time.time()
+        #
+        #     delta_t = new_time - old_time
+        #
+        #     old_pos = self.busy[0]
+        #     new_pos = position
+        #
+        #     delta_p = new_pos - old_pos
+        #
+        #     # print(delta_p / delta_t, new_pos, new_time)
 
-            delta_t = new_time - old_time
+        # self.busy = (position, time.time())
+        stop = self.progress.progress(1 -
+                                      (self.capture_position - position) / 370)
 
-            old_pos = self.busy[0]
-            new_pos = position
-
-            delta_p = new_pos - old_pos
-
-            # print(delta_p / delta_t, new_pos, new_time)
-
-        self.busy = (position, time.time())
-
-        if not self.capture_position:
+        if stop or self.stage.position >= self.capture_position:
             self.capture_stop()
-        elif self.capture_position <= self.stage.position:
-            self.capture_stop()
+
+        timestamp = image.getTimeStamp()
+        image_time = timestamp.seconds + timestamp.microSeconds * 1e-6
+
+        image_name = "%s_%s.tiff" % (image_time, position)
+        image_path = os.path.join(self.capture_location, image_name)
+        # cv2.imwrite(image_path, image.__array__())
 
     def capture_start(self):
         max_velocity = self.max_velocity.get_value()
+        seal_name = self.seal_name.get_text()
+
+        self.progress.start("Starting Capture...")
+        self.toolbar.set_sensitive(False)
+        self.preview.set_sensitive(False)
 
         self.stage.min_velocity = max_velocity
         self.stage.max_velocity = max_velocity
 
         # move turntable by 390 degrees (30 offset for start)
-        self.capture_position = self.stage.position + 390
+        self.capture_position = self.stage.position + 360 + 10
 
+        # 5 degree offset to make sure position exceeds
         self.stage.position = self.capture_position + 1
         self.camera.callback = self.capture_task
 
-        pass
+        # folder timestamp...
+        capture_type = "directLED" if self.direct_led.get_active() else "structuredLight"
+        timestamp = time.strftime("%Y_%m_%d_%H_%M")
+
+        self.capture_location = os.path.join(seal_name, "raw", capture_type,
+                                             timestamp)
+        os.makedirs(self.capture_location)
 
     def capture_stop(self):
-        # stop the stage from moving
-        self.stage.position = self.stage.position
-        self.capture_position = None
+        self.progress.stop()
+        self.toolbar.set_sensitive(True)
+        self.preview.set_sensitive(True)
 
-        self.busy = None
+        # stop the stage from moving
+        self.capture_position = None
+        self.stage.stop()
 
         # stop camera callback from triggering processing
         self.camera.callback = None
-        pass
 
     def capture_cb(self, widget, data=None):
         selection = self.preview.get_selection()
+        sealname = self.seal_name.get_text()
 
         if not selection:
             self.info.msg('ROI not Selected',
                           'Please draw a box around the seal.')
-            
-        elif self.capture_position:
-            self.capture_stop()
+
+        elif not sealname:
+            self.info.msg('No Seal Name Specified',
+                          'Please specify the seal name.')
+
         else:
             self.capture_start()
 
@@ -142,14 +166,15 @@ class MainWindow(Gtk.Window):
         self.connect('destroy', self.destroy_cb)
         self.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
         self.set_resizable(False)
+
         self.set_title(working_dir)
+        os.chdir(working_dir)
 
         self.stage = next(discover_stages(), None)
 
         if self.stage is None:
             sys.exit("unable to locate THORLABS stage")
 
-        self.working_dir = working_dir
         self.focus_window = None
         self.config_window = None
         self.capture_timeout = None
@@ -158,6 +183,7 @@ class MainWindow(Gtk.Window):
         self.capture_image = None
         self.capture_selection = None
         self.capture_position = None
+        self.capture_location = None
 
         self.vbox = Gtk.VBox(False, 0)
         self.add(self.vbox)
@@ -203,11 +229,6 @@ class MainWindow(Gtk.Window):
         self.toolbar.pack_end(button, False, False, 0)
         button.show()
 
-        label = Gtk.Label()
-        self.toolbar.pack_end(label, False, False, 0)
-        self.preview.score_label = label
-        label.show()
-
         button = Gtk.Button()
         menu_image = Gtk.Image.new_from_stock(Gtk.STOCK_PREFERENCES,
                                               Gtk.IconSize.SMALL_TOOLBAR)
@@ -215,14 +236,13 @@ class MainWindow(Gtk.Window):
         button.set_tooltip_text("Camera settings")
         button.connect('clicked', self.config_cb, None)
         button.add(menu_image)
-        self.toolbar.pack_start(button, False, False, 0)
+        self.toolbar.pack_end(button, False, False, 0)
         button.show()
 
-        # button = Gtk.Button('Focus')
-        # button.set_tooltip_text("Focus camera automatically")
-        # button.connect('clicked', self.focus_cb, None)
-        # self.toolbar.pack_start(button, False, False, 0)
-        # button.show()
+        label = Gtk.Label()
+        self.toolbar.pack_end(label, False, False, 0)
+        self.preview.score_label = label
+        label.show()
 
         spinner = Gtk.SpinButton.new_with_range(1, 4, 0.1)
         spinner.set_tooltip_text("Maximum velocity of turntable")
@@ -231,8 +251,24 @@ class MainWindow(Gtk.Window):
         self.max_velocity = spinner
         spinner.show()
 
-        button = Gtk.Button('Capture')
-        button.set_tooltip_text("Focus camera automatically")
+        entry = Gtk.Entry.new()
+        entry.set_tooltip_text("Seal name")
+        entry.set_placeholder_text("Name of Seal")
+        self.toolbar.pack_start(entry, False, False, 0)
+        self.seal_name = entry
+        entry.show()
+
+        radio = Gtk.RadioButton.new_with_label(None, "Direct LED")
+        self.direct_led = radio
+        self.toolbar.pack_start(radio, False, False, 0)
+        radio.show()
+
+        radio = Gtk.RadioButton.new_with_label_from_widget(radio, "Structured Light")
+        self.toolbar.pack_start(radio, False, False, 0)
+        radio.show()
+
+        button = Gtk.Button("Start Capture")
+        button.set_tooltip_text("Start seal capture")
         button.connect('clicked', self.capture_cb, None)
         self.toolbar.pack_start(button, False, False, 0)
         self.capture = button

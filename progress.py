@@ -16,10 +16,12 @@ class Progress(Gtk.InfoBar):
 
         self.progressbar = Gtk.ProgressBar()
         content.pack_start(self.progressbar, True, True, 0)
+        self.progressbar.set_show_text(True)
         self.progressbar.show()
 
         self.add_button('Cancel', 0)
         self.connect('response', self.cancel_cb, None)
+
 
     def start(self, message):
         self.progressbar.set_text(message)
