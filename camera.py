@@ -132,12 +132,6 @@ class Camera:
                        'seconds': timestamp.seconds,
                        'microSeconds': timestamp.microSeconds}
 
-    def add_observer(self, obs):
-        if obs not in self.callbacks:
-            self.callbacks.append(obs)
-
-    def del_observer(self, obs):
-        self.callbacks.remove(obs)
 
     def ensure_mode(self, mode):
         if self.mode_current != mode:

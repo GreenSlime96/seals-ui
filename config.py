@@ -109,7 +109,7 @@ class Config(Gtk.Window):
                                vars(PyCapture2.PROPERTY_TYPE).items()
                                if not k.startswith('_') and type(v) is int}
 
-        # build properties list
+        # build properties list -- add white balance here to lock WB
         for k, v in self.property_types.items():
             if k in (PyCapture2.PROPERTY_TYPE.TRIGGER_MODE,
                      PyCapture2.PROPERTY_TYPE.TRIGGER_DELAY,

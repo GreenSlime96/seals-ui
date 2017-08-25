@@ -2,10 +2,11 @@ import os
 import logging
 import time
 import sys
-import shutil
 import cv2
+import queue
 
 import argparse
+import PyCapture2
 
 from thorpy.comm.discovery import discover_stages
 from thorpy.message import *
@@ -21,10 +22,16 @@ import config
 import gi
 
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, GObject
 
 # 1060 x 706 pixels for preview
 preview_width = 1060
+
+# capture offset, to give turntable time to reach velocity
+capture_offset = 10
+
+# initialise GObject Threads
+GObject.threads_init()
 
 class MainWindow(Gtk.Window):
 
@@ -36,8 +43,6 @@ class MainWindow(Gtk.Window):
         if self.config_window:
             self.config_window.destroy()
             self.config_window = None
-
-        print("love baobei")
 
         self.camera.release()
 
@@ -59,25 +64,9 @@ class MainWindow(Gtk.Window):
     def capture_task(self, image):
         position = self.stage.position
 
-        # print(end - start)
-        # time = timestamp.seconds + timestamp.microSeconds * 1e-06
-
-        # if self.busy:
-        #     old_time = self.busy[1]
-        #     new_time = time.time()
-        #
-        #     delta_t = new_time - old_time
-        #
-        #     old_pos = self.busy[0]
-        #     new_pos = position
-        #
-        #     delta_p = new_pos - old_pos
-        #
-        #     # print(delta_p / delta_t, new_pos, new_time)
-
-        # self.busy = (position, time.time())
         stop = self.progress.progress(1 -
-                                      (self.capture_position - position) / 370)
+                                      (self.capture_position - position) /
+                                      (360 + capture_offset))
 
         if stop or self.stage.position >= self.capture_position:
             self.capture_stop()
@@ -85,15 +74,42 @@ class MainWindow(Gtk.Window):
         timestamp = image.getTimeStamp()
         image_time = timestamp.seconds + timestamp.microSeconds * 1e-6
 
+        if self.capture_start_time is None:
+            self.capture_start_time = image_time
+
+        image_time = image_time - self.capture_start_time
+
+        if self.capture_start_pos is None:
+            self.capture_start_pos = position
+
+        position = position - self.capture_start_pos
+
         image_name = "%s_%s.tiff" % (image_time, position)
         image_path = os.path.join(self.capture_location, image_name)
-        # cv2.imwrite(image_path, image.__array__())
+
+        roi = self.capture_selection
+
+        image_data = image.__array__()
+        roi = image_data[roi.top:roi.top + roi.height,
+                         roi.left:roi.left + roi.width]
+
+        roi = cv2.cvtColor(roi, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(image_path, roi)
+        # self.capture_image_queue.put_nowait((image_path, roi))
+
+        # tested PyCapture2.Image.save -- equally as slow as cv2.imwrite
+        # image.save(image_path.encode('ascii'),
+        #            PyCapture2.IMAGE_FILE_FORMAT.TIFF)
+
+        # if position == 0 and image_time == 0:
+        #     # start the capture queue
+        #     GLib.idle_add(self.capture_save_cb)
 
     def capture_start(self):
         max_velocity = self.max_velocity.get_value()
         seal_name = self.seal_name.get_text()
 
-        self.progress.start("Starting Capture...")
+        self.progress.start("Capturing...")
         self.toolbar.set_sensitive(False)
         self.preview.set_sensitive(False)
 
@@ -101,7 +117,8 @@ class MainWindow(Gtk.Window):
         self.stage.max_velocity = max_velocity
 
         # move turntable by 390 degrees (30 offset for start)
-        self.capture_position = self.stage.position + 360 + 10
+        self.capture_position = self.stage.position + 360 + capture_offset
+        self.capture_selection = self.preview.get_selection()
 
         # 5 degree offset to make sure position exceeds
         self.stage.position = self.capture_position + 1
@@ -115,17 +132,32 @@ class MainWindow(Gtk.Window):
                                              timestamp)
         os.makedirs(self.capture_location)
 
+        # used to normalise start and end times
+        self.capture_start_pos = None
+        self.capture_start_time = None
+
     def capture_stop(self):
         self.progress.stop()
         self.toolbar.set_sensitive(True)
         self.preview.set_sensitive(True)
 
-        # stop the stage from moving
-        self.capture_position = None
-        self.stage.stop()
-
         # stop camera callback from triggering processing
         self.camera.callback = None
+
+        # stop the stage from moving
+        self.stage.stop()
+
+    def capture_save_cb(self):
+        empty = self.capture_image_queue.empty()
+
+        if not self.camera.callback and empty:
+            return False
+
+        if not empty:
+            data = self.capture_image_queue.get_nowait()
+            cv2.imwrite(*data)
+
+        return True
 
     def capture_cb(self, widget, data=None):
         selection = self.preview.get_selection()
@@ -177,13 +209,17 @@ class MainWindow(Gtk.Window):
 
         self.focus_window = None
         self.config_window = None
-        self.capture_timeout = None
-        self.busy = False
 
-        self.capture_image = None
         self.capture_selection = None
         self.capture_position = None
         self.capture_location = None
+
+        # used to normalise start and end times
+        self.capture_start_pos = None
+        self.capture_start_time = None
+
+        # queue for image saving to not compromise fps
+        self.capture_image_queue = queue.Queue()
 
         self.vbox = Gtk.VBox(False, 0)
         self.add(self.vbox)
